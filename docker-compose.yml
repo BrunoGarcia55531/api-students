@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploy Flask Students API on ECS Fargate with SQLite
+
+Parameters:
+  Region:
+    Type: String
+    Default: "us-east-1"
+
+  ImageTag:
+    Type: String
+    Default: "latest"
+
+Resources:
+
+  StudentsECRRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: students-api
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images older than 30 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 30
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  StudentsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: students-cluster
+
+  StudentsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/students-api
+      RetentionInDays: 7
+
+  StudentsTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: students-task
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: arn:aws:iam::004701912222:role/LabRole
+      ContainerDefinitions:
+        - Name: students-api
+          Image: Fn:Sub "004701912222.dkr.ecr.${Region}.amazonaws.com/students-api:${ImageTag}"
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/students-api
+              awslogs-region: Fn:Ref Region
+              awslogs-stream-prefix: ecs
+
+  StudentsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow port 8000
+      VpcId: vpc-0a2836dace064881a
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  StudentsService:
+    Type: AWS::ECS::Service
+    DependsOn: StudentsTaskDef
+    Properties:
+      ServiceName: students-service
+      Cluster: Fn:Ref StudentsCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: Fn:Ref StudentsTaskDef
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - subnet-0fb7eda86a635fb23
+            - subnet-09faab87da96ad980
+          SecurityGroups:
+            - Fn:Ref StudentsSecurityGroup
+
+Outputs:
+  ECRRepository:
+    Description: ECR repo URL
+    Value: Fn:GetAtt StudentsECRRepo.RepositoryUri
+  ECSClusterName:
+    Value: Fn:Ref StudentsCluster
+  ECSServiceName:
+    Value: Fn:Ref StudentsService
